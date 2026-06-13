@@ -1,137 +1,250 @@
-import { useNavigate } from 'react-router-dom';
-import { Building2, Wrench, User, BedDouble, CalendarCheck, Banknote, Sparkles } from 'lucide-react';
-import { useUIStore } from '@/store/uiStore';
-import { useRoomStore } from '@/store/roomStore';
-import { useOrderStore } from '@/store/orderStore';
-import { useMaintenanceStore } from '@/store/maintenanceStore';
-import { todayISO } from '@/utils/date';
-
-const roles = [
-  {
-    id: 'host' as const,
-    label: '房东',
-    desc: '管理房间、设置价格策略、查看订单',
-    Icon: Building2,
-    gradient: 'from-clay-200 via-clay-300 to-clay-400',
-    shadow: 'shadow-clay-300/30',
-  },
-  {
-    id: 'ops' as const,
-    label: '运营人员',
-    desc: '标记维修日期、管控订单、运营调度',
-    Icon: Wrench,
-    gradient: 'from-ink-400 via-ink-500 to-ink-600',
-    shadow: 'shadow-ink-500/30',
-  },
-  {
-    id: 'guest' as const,
-    label: '住客',
-    desc: '浏览房态价历、在线预订、管理订单',
-    Icon: User,
-    gradient: 'from-sage-300 via-sage-400 to-sage-500',
-    shadow: 'shadow-sage-400/30',
-  },
-];
+import { useEffect, useState } from 'react';
+import { useBookingStore } from '../store/bookingStore';
+import { initializeSampleData } from '../utils/sampleData';
+import AvailabilityCalendar from '../components/AvailabilityCalendar';
+import PriceDetailPanel from '../components/PriceDetailPanel';
+import OrderManagement from '../components/OrderManagement';
+import DataPanels from '../components/DataPanels';
+import CalendarIO from '../components/CalendarIO';
+import type { UserRole } from '../types';
+import { Home as HomeIcon, Users, Settings, Building2, Calendar as CalendarIcon, FileText, BarChart3, Database } from 'lucide-react';
 
 export default function Home() {
-  const navigate = useNavigate();
-  const setRole = useUIStore((s) => s.setCurrentRole);
-  const rooms = useRoomStore((s) => s.rooms);
-  const orders = useOrderStore((s) => s.orders);
-  const maintenances = useMaintenanceStore((s) => s.maintenances);
+  const { 
+    currentRole, setCurrentRole, 
+    currentUserId, setCurrentUserId,
+    properties, rooms, orders,
+    resetAllData, replayEvents
+  } = useBookingStore();
+  
+  const [activeView, setActiveView] = useState<'calendar' | 'orders' | 'analysis' | 'io'>('calendar');
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  const today = todayISO();
-  const activeOrders = orders.filter(
-    (o) => ['pending', 'paid', 'confirmed', 'checkedIn'].includes(o.status) && o.checkOut >= today
-  );
-  const activeMaintenances = maintenances.filter((m) => m.status !== 'completed' && m.status !== 'cancelled' && m.endDate >= today);
+  useEffect(() => {
+    const init = async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      initializeSampleData();
+      setIsInitialized(true);
+    };
+    init();
+  }, []);
 
-  const stats = [
-    { label: '在管房间', value: rooms.length, Icon: BedDouble, color: 'text-clay-500', bg: 'bg-clay-50' },
-    { label: '今日在住', value: activeOrders.filter((o) => o.checkIn <= today && o.checkOut > today).length, Icon: CalendarCheck, color: 'text-sage-500', bg: 'bg-sage-100' },
-    { label: '维修中', value: activeMaintenances.filter((m) => m.startDate <= today).length, Icon: Wrench, color: 'text-red-500', bg: 'bg-red-50' },
-    { label: '本月订单', value: orders.length, Icon: Banknote, color: 'text-ink-500', bg: 'bg-ink-50' },
-  ];
-
-  const enter = (role: 'host' | 'ops' | 'guest') => {
-    setRole(role);
-    const routes = { host: '/host', ops: '/ops', guest: '/guest' };
-    navigate(routes[role]);
+  const handleRoleChange = (role: UserRole) => {
+    setCurrentRole(role);
+    const userIds: Record<UserRole, string> = {
+      host: 'user_1',
+      operator: 'user_3',
+      guest: 'guest_1',
+    };
+    setCurrentUserId(userIds[role]);
   };
 
-  return (
-    <div className="min-h-screen px-6 py-10 md:px-10 md:py-16">
-      <div className="max-w-6xl mx-auto">
-        <header className="text-center mb-14 animate-fade-in">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/70 border border-clay-100 text-xs text-clay-500 mb-5">
-            <Sparkles className="w-3.5 h-3.5" />
-            民宿房态价历 · 本地 Demo
-          </div>
-          <h1 className="font-display text-5xl md:text-6xl text-ink-600 leading-tight tracking-tight mb-4">
-            一屋三端，<span className="text-clay-400">尽在掌握</span>
-          </h1>
-          <p className="text-ink-300 text-lg max-w-xl mx-auto leading-relaxed">
-            房态、价格、维修、订单实时联动。房东经营、运营调度、住客预订，
-            一套日历，三种视角。
-          </p>
-        </header>
+  const roleInfo: Record<UserRole, { name: string; icon: typeof Users; color: string; description: string }> = {
+    host: { 
+      name: '房东', 
+      icon: Building2, 
+      color: 'text-blue-600 bg-blue-50 border-blue-200',
+      description: '管理房间、设置价格、处理订单'
+    },
+    operator: { 
+      name: '运营人员', 
+      icon: Settings, 
+      color: 'text-purple-600 bg-purple-50 border-purple-200',
+      description: '标记维修、临时放量、审核订单'
+    },
+    guest: { 
+      name: '住客', 
+      icon: Users, 
+      color: 'text-green-600 bg-green-50 border-green-200',
+      description: '查看房态、预订房间、管理订单'
+    },
+  };
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-12">
-          {roles.map((r, i) => (
-            <button
-              key={r.id}
-              onClick={() => enter(r.id)}
-              className={`group relative overflow-hidden rounded-3xl p-7 text-left text-white bg-gradient-to-br ${r.gradient} shadow-lg ${r.shadow} hover:shadow-pop hover:-translate-y-1 transition-all duration-300 animate-slide-up`}
-              style={{ animationDelay: `${i * 80}ms` }}
-            >
-              <div className="absolute -right-6 -top-6 w-32 h-32 rounded-full bg-white/10 blur-2xl group-hover:bg-white/20 transition-colors" />
-              <r.Icon className="w-9 h-9 mb-5 relative" />
-              <div className="font-display text-2xl mb-1.5 relative">{r.label}</div>
-              <div className="text-sm opacity-90 mb-6 relative leading-relaxed">{r.desc}</div>
-              <div className="text-sm font-medium relative flex items-center gap-1.5 opacity-90 group-hover:translate-x-1 transition-transform">
-                进入{ r.label === '运营人员' ? '运营' : r.label }端
-                <span aria-hidden>→</span>
-              </div>
-            </button>
-          ))}
+  const currentProperty = properties[0];
+
+  if (!isInitialized) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full mx-auto mb-4" />
+          <p className="text-gray-600">正在加载示例数据...</p>
         </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          {stats.map((s) => (
-            <div key={s.label} className="card p-5 flex items-center gap-4">
-              <div className={`w-11 h-11 rounded-xl ${s.bg} flex items-center justify-center`}>
-                <s.Icon className={`w-5 h-5 ${s.color}`} />
-              </div>
-              <div>
-                <div className="text-xs text-ink-300 mb-0.5">{s.label}</div>
-                <div className="font-display text-2xl text-ink-600 leading-none">{s.value}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="card p-6">
-          <h3 className="font-display text-lg text-ink-600 mb-4">功能亮点</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 text-sm text-ink-400">
-            <div>
-              <div className="font-medium text-ink-600 mb-1.5">📅 联动日历</div>
-              已订、维修、可订状态一目了然，价格随规则实时计算。
-            </div>
-            <div>
-              <div className="font-medium text-ink-600 mb-1.5">💰 灵活定价</div>
-              平日/周末/节假日多档价，连住阶梯折扣，随时调整。
-            </div>
-            <div>
-              <div className="font-medium text-ink-600 mb-1.5">🛠 维修隔离</div>
-              维修时段自动锁房，订单取消按规则清晰扣费。
-            </div>
-          </div>
-        </div>
-
-        <footer className="mt-10 text-center text-xs text-ink-200">
-          数据保存在浏览器 localStorage · 刷新不丢失 · 可随时清空浏览器缓存重置
-        </footer>
       </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
+        <div className="max-w-[1600px] mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+                  <HomeIcon className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-lg font-bold text-gray-900">民宿房态价历系统</h1>
+                  <p className="text-xs text-gray-500">
+                    {currentProperty?.name} · {rooms.length} 间客房
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+                {(['host', 'operator', 'guest'] as UserRole[]).map(role => {
+                  const info = roleInfo[role];
+                  const Icon = info.icon;
+                  return (
+                    <button
+                      key={role}
+                      onClick={() => handleRoleChange(role)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all ${
+                        currentRole === role
+                          ? 'bg-white shadow text-gray-900'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      {info.name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className={`px-3 py-1.5 rounded-lg text-sm border ${roleInfo[currentRole].color}`}>
+                <div className="font-medium">{roleInfo[currentRole].name}视角</div>
+                <div className="text-xs opacity-75">{roleInfo[currentRole].description}</div>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (confirm('确定要重置所有数据吗？此操作不可恢复。')) {
+                    resetAllData();
+                    setTimeout(() => initializeSampleData(), 100);
+                  }
+                }}
+                className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200"
+              >
+                重置数据
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+            <button
+              onClick={() => setActiveView('calendar')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${
+                activeView === 'calendar'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <CalendarIcon className="w-4 h-4" />
+              房态日历
+            </button>
+            <button
+              onClick={() => setActiveView('orders')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${
+                activeView === 'orders'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              订单管理
+              {orders.filter(o => o.status === 'pending').length > 0 && (
+                <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">
+                  {orders.filter(o => o.status === 'pending').length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveView('analysis')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${
+                activeView === 'analysis'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              数据分析
+            </button>
+            <button
+              onClick={() => setActiveView('io')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors ${
+                activeView === 'io'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              数据导入导出
+            </button>
+
+            <div className="flex-1" />
+
+            <div className="text-sm text-gray-500">
+              订单总数：<span className="font-medium text-gray-900">{orders.length}</span>
+              <span className="mx-2">·</span>
+              活跃订单：<span className="font-medium text-blue-600">
+                {orders.filter(o => !['cancelled', 'completed'].includes(o.status)).length}
+              </span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 py-6">
+        {activeView === 'calendar' && (
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2 space-y-6">
+              <AvailabilityCalendar />
+              <DataPanels />
+            </div>
+            <div className="space-y-6">
+              <PriceDetailPanel />
+            </div>
+          </div>
+        )}
+
+        {activeView === 'orders' && (
+          <OrderManagement />
+        )}
+
+        {activeView === 'analysis' && (
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2">
+              <DataPanels />
+            </div>
+            <div className="space-y-6">
+              <PriceDetailPanel />
+            </div>
+          </div>
+        )}
+
+        {activeView === 'io' && (
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <CalendarIO />
+            </div>
+            <div>
+              <DataPanels />
+            </div>
+          </div>
+        )}
+      </main>
+
+      <footer className="bg-white border-t border-gray-200 mt-8 py-4">
+        <div className="max-w-[1600px] mx-auto px-4 text-center text-sm text-gray-500">
+          <p>民宿房态价历系统 · 所有数据保存在浏览器本地存储</p>
+          <p className="mt-1 text-xs text-gray-400">
+            支持多房间多日期管理、维修标记、节假日价格、连住折扣、订单状态机、退款分层计算
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
