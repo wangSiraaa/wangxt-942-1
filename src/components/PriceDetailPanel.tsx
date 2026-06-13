@@ -54,8 +54,15 @@ export default function PriceDetailPanel() {
       alert('请选择房间和日期范围');
       return;
     }
-    batchUpdatePrices(batchRoomIds, batchStartDate, batchEndDate, adjustmentValue, adjustmentType);
-    alert('批量价格调整已应用');
+    const result = batchUpdatePrices(batchRoomIds, batchStartDate, batchEndDate, adjustmentValue, adjustmentType);
+    if (result.updatedCount > 0) {
+      const changes = result.affectedOrders.map(o => 
+        `订单 ${o.orderId.slice(-6)}: ¥${o.oldPrice.toFixed(0)} → ¥${o.newPrice.toFixed(0)}`
+      ).join('\n');
+      alert(`批量价格调整已应用\n\n已自动更新 ${result.updatedCount} 个未锁价订单的价格：\n${changes}`);
+    } else {
+      alert('批量价格调整已应用\n\n没有需要更新的未锁价订单');
+    }
   };
 
   return (

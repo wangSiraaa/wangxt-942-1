@@ -1,17 +1,17 @@
 import { useState, useMemo } from 'react';
 import { useBookingStore } from '../store/bookingStore';
-import { getOrderStatusName, getOrderStatusColor, checkStateTransition, processOrderCancellation, processPartialCancellation, canReschedule, canPartialCancel, canLockPrice } from '../utils/orderStateMachine';
+import { getOrderStatusName, getOrderStatusColor, checkStateTransition, processOrderCancellation, processPartialCancellation, canReschedule, canPartialCancel, canLockPrice, canModifyPrice } from '../utils/orderStateMachine';
 import { getNightsBetween, getToday } from '../utils/dateUtils';
 import { calculatePrice } from '../utils/priceCalculator';
 import type { OrderStatus, RefundReason } from '../types';
-import { FileText, Plus, Clock, DollarSign, Edit3, Trash2, RefreshCw, Lock, Unlock, CheckCircle, XCircle, AlertTriangle, ArrowRight, Calendar } from 'lucide-react';
+import { FileText, Plus, Clock, DollarSign, Edit3, Trash2, RefreshCw, Lock, Unlock, CheckCircle, XCircle, AlertTriangle, ArrowRight, Calendar, TrendingUp, TrendingDown, Info } from 'lucide-react';
 
 export default function OrderManagement() {
   const { 
     orders, rooms, priceVersions, holidayPrices, longStayDiscounts, refunds,
     selectedOrderId, setSelectedOrderId, currentRole,
     createOrder, updateOrderStatus, payOrder, lockOrderPrice, cancelOrder, partialCancelOrder, rescheduleOrder,
-    getAvailability, calculateRefundForOrder
+    getAvailability, calculateRefundForOrder, getDynamicOrderPrice
   } = useBookingStore();
 
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -250,12 +250,52 @@ export default function OrderManagement() {
                         </span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-semibold text-indigo-600">¥{order.priceSnapshot.totalPrice.toFixed(0)}</div>
-                      <div className="text-xs text-gray-500">
-                        已付 ¥{order.paidAmount.toFixed(0)}
-                      </div>
-                    </div>
+                    {(() => {
+                      const priceInfo = getDynamicOrderPrice(order.id);
+                      const displayPrice = priceInfo.isLocked ? priceInfo.snapshotPrice : priceInfo.currentPrice;
+                      return (
+                        <div className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className={`font-semibold ${priceInfo.isLocked ? 'text-gray-600' : 'text-indigo-600'}`}>
+                              ¥{displayPrice.totalPrice.toFixed(0)}
+                            </span>
+                            {priceInfo.isLocked ? (
+                              <span title="已锁价，不受价格变动影响">
+                                <Lock className="w-3 h-3 text-purple-600" />
+                              </span>
+                            ) : (
+                              <span title="未锁价，价格可能变动">
+                                <Unlock className="w-3 h-3 text-amber-500" />
+                              </span>
+                            )}
+                          </div>
+                          {priceInfo.priceChanged && !priceInfo.isLocked && (
+                            <div className={`text-xs flex items-center justify-end gap-0.5 ${
+                              priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice 
+                                ? 'text-red-500' 
+                                : 'text-green-500'
+                            }`}>
+                              {priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice ? (
+                                <><TrendingUp className="w-3 h-3" /> 较原价涨 ¥{(priceInfo.currentPrice.totalPrice - priceInfo.snapshotPrice.totalPrice).toFixed(0)}</>
+                              ) : (
+                                <><TrendingDown className="w-3 h-3" /> 较原价降 ¥{(priceInfo.snapshotPrice.totalPrice - priceInfo.currentPrice.totalPrice).toFixed(0)}</>
+                              )}
+                            </div>
+                          )}
+                          {!priceInfo.isLocked && !priceInfo.priceChanged && (
+                            <div className="text-xs text-amber-500">
+                              价格待确认
+                            </div>
+                          )}
+                          <div className="text-xs text-gray-500">
+                            已付 ¥{order.paidAmount.toFixed(0)}
+                            {order.paidAmount > 0 && !priceInfo.isLocked && (
+                              <span className="text-purple-500 ml-1">（已付锁价）</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                   
                   {selectedOrderId === order.id && (
@@ -353,88 +393,178 @@ export default function OrderManagement() {
                 </span>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">房间</span>
-                  <span className="font-medium">{rooms.find(r => r.id === selectedOrder.roomId)?.name}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">入住人</span>
-                  <span className="font-medium">{selectedOrder.guestName}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">联系电话</span>
-                  <span className="font-medium">{selectedOrder.guestPhone}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">入住日期</span>
-                  <span className="font-medium">{selectedOrder.checkinDate}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">退房日期</span>
-                  <span className="font-medium">{selectedOrder.checkoutDate}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">入住人数</span>
-                  <span className="font-medium">{selectedOrder.guestCount}人</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">价格锁定</span>
-                  <span className="font-medium flex items-center gap-1">
-                    {selectedOrder.lockedPrice ? <Lock className="w-4 h-4 text-purple-600" /> : <Unlock className="w-4 h-4 text-gray-400" />}
-                    {selectedOrder.lockedPrice ? '已锁定' : '未锁定'}
-                  </span>
-                </div>
-                {selectedOrder.rescheduledFrom && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">改期记录</span>
-                    <span className="text-orange-600">有改期历史</span>
-                  </div>
-                )}
-              </div>
+              {(() => {
+                const priceInfo = getDynamicOrderPrice(selectedOrder.id);
+                const canModify = canModifyPrice(selectedOrder);
+                const displayPrice = priceInfo.isLocked ? priceInfo.snapshotPrice : priceInfo.currentPrice;
+                
+                return (
+                  <>
+                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">房间</span>
+                        <span className="font-medium">{rooms.find(r => r.id === selectedOrder.roomId)?.name}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">入住人</span>
+                        <span className="font-medium">{selectedOrder.guestName}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">联系电话</span>
+                        <span className="font-medium">{selectedOrder.guestPhone}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">入住日期</span>
+                        <span className="font-medium">{selectedOrder.checkinDate}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">退房日期</span>
+                        <span className="font-medium">{selectedOrder.checkoutDate}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">入住人数</span>
+                        <span className="font-medium">{selectedOrder.guestCount}人</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">价格锁定</span>
+                        <span className="font-medium flex items-center gap-1">
+                          {priceInfo.isLocked ? <Lock className="w-4 h-4 text-purple-600" /> : <Unlock className="w-4 h-4 text-amber-500" />}
+                          {priceInfo.isLocked ? '已锁定' : '未锁定'}
+                        </span>
+                      </div>
+                      {!priceInfo.isLocked && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                          <div className="text-xs text-amber-800 flex items-start gap-1">
+                            <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <div className="font-medium">价格未锁定</div>
+                              <div className="mt-1">价格可能随节假日、连住折扣等因素变动。确认付款后价格将锁定。</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {selectedOrder.rescheduledFrom && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">改期记录</span>
+                          <span className="text-orange-600">有改期历史</span>
+                        </div>
+                      )}
+                    </div>
 
-              <div className="bg-indigo-50 rounded-lg p-4">
-                <h5 className="font-medium text-indigo-900 mb-3 flex items-center gap-1">
-                  <DollarSign className="w-4 h-4" />
-                  价格明细（快照）
-                </h5>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">基础房价</span>
-                    <span>¥{selectedOrder.priceSnapshot.basePrice.toFixed(2)}</span>
-                  </div>
-                  {selectedOrder.priceSnapshot.holidayPremium > 0 && (
-                    <div className="flex justify-between text-red-600">
-                      <span>节假日溢价</span>
-                      <span>+¥{selectedOrder.priceSnapshot.holidayPremium.toFixed(2)}</span>
+                    {!priceInfo.isLocked && priceInfo.priceChanged && (
+                      <div className={`rounded-lg p-4 border ${
+                        priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice
+                          ? 'bg-red-50 border-red-200'
+                          : 'bg-green-50 border-green-200'
+                      }`}>
+                        <div className="text-sm font-medium mb-2 flex items-center gap-1">
+                          {priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice ? (
+                            <><TrendingUp className="w-4 h-4" /> 价格已上涨</>
+                          ) : (
+                            <><TrendingDown className="w-4 h-4" /> 价格已下降</>
+                          )}
+                        </div>
+                        <div className="text-xs space-y-1">
+                          <div className="flex justify-between">
+                            <span>原价（下单时）</span>
+                            <span className="font-medium">¥{priceInfo.snapshotPrice.totalPrice.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>当前价</span>
+                            <span className={`font-medium ${
+                              priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice
+                                ? 'text-red-600'
+                                : 'text-green-600'
+                            }`}>
+                              ¥{priceInfo.currentPrice.totalPrice.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between border-t pt-1 mt-1">
+                            <span>差额</span>
+                            <span className={`font-medium ${
+                              priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice
+                                ? 'text-red-600'
+                                : 'text-green-600'
+                            }`}>
+                              {priceInfo.currentPrice.totalPrice > priceInfo.snapshotPrice.totalPrice ? '+' : ''}
+                              ¥{(priceInfo.currentPrice.totalPrice - priceInfo.snapshotPrice.totalPrice).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={`rounded-lg p-4 ${
+                      priceInfo.isLocked ? 'bg-gray-100' : 'bg-indigo-50'
+                    }`}>
+                      <h5 className={`font-medium mb-3 flex items-center gap-1 ${
+                        priceInfo.isLocked ? 'text-gray-700' : 'text-indigo-900'
+                      }`}>
+                        <DollarSign className="w-4 h-4" />
+                        价格明细{priceInfo.isLocked ? '（已锁定）' : '（当前计算）'}
+                      </h5>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">基础房价</span>
+                          <span>¥{displayPrice.basePrice.toFixed(2)}</span>
+                        </div>
+                        {displayPrice.holidayPremium > 0 && (
+                          <div className="flex justify-between text-red-600">
+                            <span>节假日溢价</span>
+                            <span>+¥{displayPrice.holidayPremium.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {displayPrice.weekendPremium > 0 && (
+                          <div className="flex justify-between text-orange-600">
+                            <span>周末溢价</span>
+                            <span>+¥{displayPrice.weekendPremium.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {displayPrice.longStayDiscount > 0 && (
+                          <div className="flex justify-between text-green-600">
+                            <span>连住折扣</span>
+                            <span>-¥{displayPrice.longStayDiscount.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {displayPrice.benefitAmount > 0 && (
+                          <div className="flex justify-between text-blue-600">
+                            <span>{displayPrice.benefitSource}</span>
+                            <span>-¥{displayPrice.benefitAmount.toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className={`border-t pt-2 flex justify-between font-semibold ${
+                          priceInfo.isLocked ? 'border-gray-300' : 'border-indigo-200'
+                        }`}>
+                          <span>总价</span>
+                          <span className="text-xl">¥{displayPrice.totalPrice.toFixed(2)}</span>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                  {selectedOrder.priceSnapshot.weekendPremium > 0 && (
-                    <div className="flex justify-between text-orange-600">
-                      <span>周末溢价</span>
-                      <span>+¥{selectedOrder.priceSnapshot.weekendPremium.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {selectedOrder.priceSnapshot.longStayDiscount > 0 && (
-                    <div className="flex justify-between text-green-600">
-                      <span>连住折扣</span>
-                      <span>-¥{selectedOrder.priceSnapshot.longStayDiscount.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {selectedOrder.priceSnapshot.benefitAmount > 0 && (
-                    <div className="flex justify-between text-blue-600">
-                      <span>{selectedOrder.priceSnapshot.benefitSource}</span>
-                      <span>-¥{selectedOrder.priceSnapshot.benefitAmount.toFixed(2)}</span>
-                    </div>
-                  )}
-                  <div className="border-t border-indigo-200 pt-2 flex justify-between font-semibold">
-                    <span>总价</span>
-                    <span className="text-xl">¥{selectedOrder.priceSnapshot.totalPrice.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">已支付</span>
-                    <span className="text-green-600 font-medium">¥{selectedOrder.paidAmount.toFixed(2)}</span>
-                  </div>
+
+                    {!priceInfo.isLocked && (
+                      <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+                        <div className="text-xs text-purple-800">
+                          <div className="font-medium mb-1">💡 价格锁定说明</div>
+                          <ul className="space-y-0.5 text-purple-700">
+                            <li>• 已付款订单：价格自动锁定，不受后续价格变更影响</li>
+                            <li>• 已锁价订单：使用锁定时的价格快照</li>
+                            <li>• 未锁价订单：按当前最新价格动态计算</li>
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex justify-between text-sm mb-3">
+                  <span className="text-gray-600">已支付</span>
+                  <span className="text-green-600 font-medium">¥{selectedOrder.paidAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">待支付</span>
+                  <span className="text-orange-600 font-medium">¥{Math.max(0, (getDynamicOrderPrice(selectedOrder.id).isLocked ? getDynamicOrderPrice(selectedOrder.id).snapshotPrice.totalPrice : getDynamicOrderPrice(selectedOrder.id).currentPrice.totalPrice) - selectedOrder.paidAmount).toFixed(2)}</span>
                 </div>
               </div>
 

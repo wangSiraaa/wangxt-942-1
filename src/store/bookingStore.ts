@@ -55,11 +55,11 @@ interface BookingState {
   updateRoom: (id: string, data: Partial<Room>) => void;
   
   createPriceVersion: (data: Omit<PriceVersion, 'id' | 'createdAt'>) => PriceVersion;
-  activatePriceVersion: (id: string) => void;
+  activatePriceVersion: (id: string) => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
   archivePriceVersion: (id: string) => void;
-  setHolidayPrice: (data: Omit<HolidayPrice, 'id' | 'createdAt'>) => HolidayPrice;
-  setLongStayDiscount: (data: Omit<LongStayDiscount, 'id' | 'createdAt'>) => LongStayDiscount;
-  batchUpdatePrices: (roomIds: string[], startDate: string, endDate: string, adjustment: number, type: 'fixed' | 'percent') => void;
+  setHolidayPrice: (data: Omit<HolidayPrice, 'id' | 'createdAt'>) => { holidayPrice: HolidayPrice; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> } };
+  setLongStayDiscount: (data: Omit<LongStayDiscount, 'id' | 'createdAt'>) => { discount: LongStayDiscount; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> } };
+  batchUpdatePrices: (roomIds: string[], startDate: string, endDate: string, adjustment: number, type: 'fixed' | 'percent') => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
   
   createMaintenance: (data: Omit<MaintenanceRecord, 'id' | 'createdAt'>) => MaintenanceRecord;
   cancelMaintenance: (id: string) => void;
@@ -78,6 +78,8 @@ interface BookingState {
   
   calculatePriceForBooking: (roomId: string, checkin: string, checkout: string, existingOrderId?: string) => PriceCalculationResult | null;
   calculateRefundForOrder: (orderId: string, reason: RefundRecord['reason']) => RefundCalculationResult | null;
+  getDynamicOrderPrice: (orderId: string) => { currentPrice: PriceCalculationResult; snapshotPrice: PriceCalculationResult; isLocked: boolean; priceChanged: boolean };
+  recalculateUnlockedOrderPrices: () => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
   getAvailability: (roomId: string, checkin: string, checkout: string) => ReturnType<typeof checkAvailability>;
   getConflicts: () => ConflictInfo[];
   getRevenueForecast: (startDate: string, endDate: string) => RevenueForecast[];
@@ -259,6 +261,17 @@ export const useBookingStore = create<BookingState>()(
                   : o
               );
               break;
+            case 'ORDER_PRICE_RECALCULATED':
+              orders = orders.map(o => 
+                o.id === event.payload.orderId 
+                  ? { 
+                      ...o, 
+                      priceSnapshot: event.payload.newSnapshot,
+                      updatedAt: Date.now() 
+                    } 
+                  : o
+              );
+              break;
             case 'REFUND_CREATED':
               refunds.push(event.payload);
               break;
@@ -273,6 +286,42 @@ export const useBookingStore = create<BookingState>()(
           }
         }
         
+        const updatedOrders = orders.map(order => {
+          if (order.lockedPrice) return order;
+          if (['paid', 'locked', 'checkin', 'checkout', 'completed'].includes(order.status)) {
+            return order;
+          }
+          
+          const room = rooms.find(r => r.id === order.roomId);
+          if (!room) return order;
+          
+          const newPrice = calculatePrice(
+            room,
+            order.checkinDate,
+            order.checkoutDate,
+            priceVersions,
+            holidayPrices,
+            longStayDiscounts,
+            undefined,
+            order.priceSnapshot.benefitSource,
+            order.priceSnapshot.benefitAmount
+          );
+          
+          return {
+            ...order,
+            priceSnapshot: {
+              basePrice: newPrice.basePrice,
+              holidayPremium: newPrice.holidayPremium,
+              weekendPremium: newPrice.weekendPremium,
+              longStayDiscount: newPrice.longStayDiscount,
+              otherDiscounts: newPrice.otherDiscounts,
+              totalPrice: newPrice.totalPrice,
+              benefitSource: newPrice.benefitSource,
+              benefitAmount: newPrice.benefitAmount,
+            },
+          };
+        });
+        
         set({
           properties,
           rooms,
@@ -282,7 +331,7 @@ export const useBookingStore = create<BookingState>()(
           maintenances,
           locks,
           releases,
-          orders,
+          orders: updatedOrders,
           refunds,
         });
         
@@ -342,6 +391,8 @@ export const useBookingStore = create<BookingState>()(
       
       activatePriceVersion: (id) => {
         get().applyEvent('PRICE_VERSION_ACTIVATED', id);
+        const result = get().recalculateUnlockedOrderPrices();
+        return result;
       },
       
       archivePriceVersion: (id) => {
@@ -355,7 +406,8 @@ export const useBookingStore = create<BookingState>()(
           createdAt: Date.now(),
         };
         get().applyEvent('HOLIDAY_PRICE_SET', hp);
-        return hp;
+        const result = get().recalculateUnlockedOrderPrices();
+        return { holidayPrice: hp, recalcResult: result };
       },
       
       setLongStayDiscount: (data) => {
@@ -365,13 +417,16 @@ export const useBookingStore = create<BookingState>()(
           createdAt: Date.now(),
         };
         get().applyEvent('LONG_STAY_DISCOUNT_SET', discount);
-        return discount;
+        const result = get().recalculateUnlockedOrderPrices();
+        return { discount, recalcResult: result };
       },
       
       batchUpdatePrices: (roomIds, startDate, endDate, adjustment, type) => {
         const { holidayPrices } = get();
         const newPrices = calculateBatchPriceUpdate(roomIds, startDate, endDate, adjustment, type, holidayPrices);
         get().applyEvent('BATCH_PRICE_UPDATED', newPrices);
+        const result = get().recalculateUnlockedOrderPrices();
+        return result;
       },
       
       createMaintenance: (data) => {
@@ -561,6 +616,117 @@ export const useBookingStore = create<BookingState>()(
         const order = orders.find(o => o.id === orderId);
         if (!order) return null;
         return calculateRefund(order, reason);
+      },
+      
+      getDynamicOrderPrice: (orderId) => {
+        const { orders, rooms, priceVersions, holidayPrices, longStayDiscounts } = get();
+        const order = orders.find(o => o.id === orderId);
+        if (!order) {
+          throw new Error('订单不存在');
+        }
+        
+        const room = rooms.find(r => r.id === order.roomId);
+        if (!room) {
+          throw new Error('房间不存在');
+        }
+        
+        const isLocked = order.lockedPrice || ['paid', 'locked', 'checkin', 'checkout', 'completed'].includes(order.status);
+        
+        const snapshotPrice: PriceCalculationResult = {
+          basePrice: order.priceSnapshot.basePrice,
+          holidayPremium: order.priceSnapshot.holidayPremium,
+          weekendPremium: order.priceSnapshot.weekendPremium,
+          longStayDiscount: order.priceSnapshot.longStayDiscount,
+          otherDiscounts: order.priceSnapshot.otherDiscounts,
+          subtotal: order.priceSnapshot.totalPrice,
+          benefitSource: order.priceSnapshot.benefitSource,
+          benefitAmount: order.priceSnapshot.benefitAmount,
+          totalPrice: order.priceSnapshot.totalPrice,
+          dailyBreakdown: [],
+        };
+        
+        let currentPrice: PriceCalculationResult;
+        if (isLocked) {
+          currentPrice = snapshotPrice;
+        } else {
+          currentPrice = calculatePrice(
+            room,
+            order.checkinDate,
+            order.checkoutDate,
+            priceVersions,
+            holidayPrices,
+            longStayDiscounts,
+            null,
+            order.priceSnapshot.benefitSource,
+            order.priceSnapshot.benefitAmount
+          );
+        }
+        
+        const priceChanged = !isLocked && 
+          Math.abs(currentPrice.totalPrice - snapshotPrice.totalPrice) > 0.01;
+        
+        return {
+          currentPrice,
+          snapshotPrice,
+          isLocked,
+          priceChanged,
+        };
+      },
+      
+      recalculateUnlockedOrderPrices: () => {
+        const { orders, rooms, priceVersions, holidayPrices, longStayDiscounts, applyEvent } = get();
+        const affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> = [];
+        
+        for (const order of orders) {
+          const isLocked = order.lockedPrice || ['paid', 'locked', 'checkin', 'checkout', 'completed'].includes(order.status);
+          if (isLocked) continue;
+          
+          const room = rooms.find(r => r.id === order.roomId);
+          if (!room) continue;
+          
+          const oldPrice = order.priceSnapshot.totalPrice;
+          const newCalc = calculatePrice(
+            room,
+            order.checkinDate,
+            order.checkoutDate,
+            priceVersions,
+            holidayPrices,
+            longStayDiscounts,
+            null,
+            order.priceSnapshot.benefitSource,
+            order.priceSnapshot.benefitAmount
+          );
+          
+          if (Math.abs(newCalc.totalPrice - oldPrice) > 0.01) {
+            applyEvent('ORDER_PRICE_RECALCULATED', {
+              orderId: order.id,
+              oldPrice,
+              newPrice: newCalc.totalPrice,
+              oldSnapshot: order.priceSnapshot,
+              newSnapshot: {
+                basePrice: newCalc.basePrice,
+                holidayPremium: newCalc.holidayPremium,
+                weekendPremium: newCalc.weekendPremium,
+                longStayDiscount: newCalc.longStayDiscount,
+                otherDiscounts: newCalc.otherDiscounts,
+                totalPrice: newCalc.totalPrice,
+                benefitSource: newCalc.benefitSource,
+                benefitAmount: newCalc.benefitAmount,
+              },
+            });
+            
+            affectedOrders.push({
+              orderId: order.id,
+              oldPrice,
+              newPrice: newCalc.totalPrice,
+            });
+          }
+        }
+        
+        return {
+          updatedCount: affectedOrders.length,
+          affectedOrders,
+        };
       },
       
       getAvailability: (roomId, checkin, checkout) => {
