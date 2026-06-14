@@ -38,7 +38,7 @@ const CalendarDayCell = ({ date, roomId, status, isSelected, isInRange, onClick,
   const channelSnapshots: ChannelInventorySnapshot[] = useMemo(() => {
     if (!date) return [];
     try {
-      const snaps = useBookingStore.getState().getAllChannelSnapshots(roomId, date);
+      const snaps = useBookingStore.getState().getChannelSnapshotsAt(roomId, date);
       return snaps || [];
     } catch (e) {
       return [];

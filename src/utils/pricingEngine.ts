@@ -152,6 +152,7 @@ export const calculateHistoricalOccupancyFactor = (
   
   let avgOccupancy = 0;
   let description = '无历史数据参考';
+  let value = 0;
   
   if (historicalData.length > 0) {
     avgOccupancy = historicalData.reduce((sum, r) => sum + r.occupancyRate, 0) / historicalData.length;

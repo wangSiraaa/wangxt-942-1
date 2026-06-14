@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useBookingStore } from '../store/bookingStore';
 import { getOrderStatusName, getOrderStatusColor, checkStateTransition, processOrderCancellation, processPartialCancellation, canReschedule, canPartialCancel, canLockPrice, canModifyPrice } from '../utils/orderStateMachine';
-import { getNightsBetween, getToday } from '../utils/dateUtils';
+import { getNightsBetween, getToday, addDays } from '../utils/dateUtils';
 import { calculatePrice } from '../utils/priceCalculator';
 import type { OrderStatus, RefundReason } from '../types';
 import { FileText, Plus, Clock, DollarSign, Edit3, Trash2, RefreshCw, Lock, Unlock, CheckCircle, XCircle, AlertTriangle, ArrowRight, Calendar, TrendingUp, TrendingDown, Info } from 'lucide-react';
@@ -143,7 +143,10 @@ export default function OrderManagement() {
     if (!order) return;
 
     if (cancelReason === 'partial_cancel' && canPartialCancel(order)) {
-      partialCancelOrder(showCancelModal, partialNights, cancelReason);
+      const totalNights = getNightsBetween(order.checkinDate, order.checkoutDate);
+      const safeCancelNights = Math.min(partialNights, totalNights - 1);
+      const cancelCheckin = addDays(order.checkoutDate, -safeCancelNights);
+      partialCancelOrder(showCancelModal, safeCancelNights, cancelCheckin, order.checkoutDate, cancelReason);
     } else {
       cancelOrder(showCancelModal, cancelReason);
     }

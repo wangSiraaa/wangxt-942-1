@@ -141,13 +141,16 @@ export default function RevenuePanel() {
       alert('请选择批量调价的日期范围');
       return;
     }
-    const validation = validatePriceAdjustmentParams(batchAdjust.value, batchAdjust.type, displayedRooms);
+    const currentAvgPrice = displayedRooms.length > 0
+      ? displayedRooms.reduce((sum, r) => sum + r.basePrice, 0) / displayedRooms.length
+      : 300;
+    const validation = validatePriceAdjustmentParams(batchAdjust.value, batchAdjust.type === 'absolute' ? 'fixed' : batchAdjust.type, currentAvgPrice);
     if (!validation.valid) {
       alert('调价参数错误: ' + validation.reason);
       return;
     }
     const result = protectedBatchUpdatePrices(
-      displayedRooms.map(r => r.id), batchStart, batchEnd, batchAdjust.value, batchAdjust.type
+      displayedRooms.map(r => r.id), batchStart, batchEnd, batchAdjust.value, batchAdjust.type === 'absolute' ? 'fixed' : batchAdjust.type
     );
     setBatchResult(result);
   };
@@ -199,7 +202,7 @@ export default function RevenuePanel() {
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
-              {tab.badge !== null && tab.badge !== undefined && (
+              {'badge' in tab && tab.badge !== null && tab.badge !== undefined && (
                 <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
                   {tab.badge}
                 </span>

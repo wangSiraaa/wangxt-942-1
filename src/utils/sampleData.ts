@@ -189,9 +189,7 @@ export const initializeSampleData = () => {
   
   for (const room of rooms) {
     store.initDefaultChannelConfigs(room.id);
-    store.createOrUpdateChannelConfig({
-      roomId: room.id,
-      channel: 'ota',
+    store.createOrUpdateChannelConfig(room.id, 'ota', {
       channelName: '携程/美团OTA',
       enabled: true,
       totalInventory: 1,
@@ -201,9 +199,7 @@ export const initializeSampleData = () => {
       oversellThreshold: 0,
       commissionRate: 0.15,
     });
-    store.createOrUpdateChannelConfig({
-      roomId: room.id,
-      channel: 'corporate_longstay',
+    store.createOrUpdateChannelConfig(room.id, 'corporate_longstay', {
       channelName: '企业长租协议',
       enabled: true,
       totalInventory: 2,
@@ -213,9 +209,7 @@ export const initializeSampleData = () => {
       oversellThreshold: 0,
       commissionRate: 0.05,
     });
-    store.createOrUpdateChannelConfig({
-      roomId: room.id,
-      channel: 'event_buyout',
+    store.createOrUpdateChannelConfig(room.id, 'event_buyout', {
       channelName: '临时包栋/团建',
       enabled: true,
       totalInventory: rooms.length,

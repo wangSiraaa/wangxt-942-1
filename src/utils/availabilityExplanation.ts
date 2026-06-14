@@ -2,7 +2,9 @@ import type {
   Room,
   MaintenanceRecord,
   LockRecord,
+  ReleaseRecord,
   Order,
+  OrderChannelInfo,
   ChannelConfig,
   ChannelInventorySnapshot,
   CleaningSchedule,
@@ -106,7 +108,9 @@ export const explainAvailability = (
   orders: Order[],
   channelConfigs: ChannelConfig[],
   cleaningSchedules: CleaningSchedule[],
-  dayStatus?: CalendarDayStatus
+  dayStatus?: CalendarDayStatus,
+  orderChannelInfos: OrderChannelInfo[] = [],
+  releases: ReleaseRecord[] = []
 ): AvailabilityExplanation => {
   const today = getToday();
   const activeOrders = getActiveOrdersForDate(room.id, date, orders);
@@ -115,12 +119,15 @@ export const explainAvailability = (
   const cleaning = getCleaningStatus(room.id, date, cleaningSchedules);
 
   const allSnapshots = calculateAllChannelSnapshots(
-    [room.id],
+    [room],
     date,
     date,
-    orders,
     channelConfigs,
-    []
+    orders,
+    orderChannelInfos,
+    maintenances,
+    locks,
+    releases
   );
   const roomSnapshots = Array.from(allSnapshots.values()).filter(
     (s) => s.roomId === room.id
@@ -243,7 +250,9 @@ export const batchExplainAvailability = (
   orders: Order[],
   channelConfigs: ChannelConfig[],
   cleaningSchedules: CleaningSchedule[],
-  calendarStatus: Map<string, CalendarDayStatus>
+  calendarStatus: Map<string, CalendarDayStatus>,
+  orderChannelInfos: OrderChannelInfo[] = [],
+  releases: ReleaseRecord[] = []
 ): Map<string, AvailabilityExplanation> => {
   const result = new Map<string, AvailabilityExplanation>();
 
@@ -260,7 +269,9 @@ export const batchExplainAvailability = (
         orders,
         channelConfigs,
         cleaningSchedules,
-        dayStatus
+        dayStatus,
+        orderChannelInfos,
+        releases
       );
       result.set(key, explanation);
 

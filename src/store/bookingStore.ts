@@ -117,8 +117,9 @@ interface BookingState {
   createOrUpdateChannelConfig: (roomId: string, channel: ChannelType, config: Partial<ChannelConfig>) => ChannelConfig;
   initDefaultChannelConfigs: (roomId: string) => ChannelConfig[];
   getAllChannelSnapshots: () => Map<string, ChannelInventorySnapshot>;
+  getChannelSnapshotsAt: (roomId: string, date: string) => ChannelInventorySnapshot[];
   checkChannelOversellForRoom: (roomId: string, date: string) => { hasOversell: boolean; oversoldUnits: number; channel?: ChannelType };
-  assignOrderChannel: (orderId: string, channel: ChannelType, commissionRate?: number) => void;
+  assignOrderChannel: (orderId: string, channel: ChannelType, channelOrderIdOrCommission?: string | number, commissionAmount?: number) => void;
   getOrderChannel: (orderId: string) => OrderChannelInfo | null;
 
   generatePricingSuggestions: (roomIds: string[], startDate: string, endDate: string) => PricingSuggestion[];
@@ -127,16 +128,16 @@ interface BookingState {
   getPricingSuggestions: (roomId?: string) => PricingSuggestion[];
 
   runExceptionDetection: () => ExceptionQueueItem[];
-  updateException: (exceptionId: string, status: ExceptionStatus, resolution?: string) => ExceptionQueueItem | null;
-  assignExceptionTo: (exceptionId: string, assigneeId: string) => ExceptionQueueItem | null;
+  updateException: (exceptionId: string, status: ExceptionStatus, operatorId?: string, operatorRole?: UserRole, note?: string) => ExceptionQueueItem | null;
+  assignExceptionTo: (exceptionId: string, assigneeId: string, operatorId?: string, operatorRole?: UserRole, note?: string) => ExceptionQueueItem | null;
   getExceptionQueue: (filters?: Parameters<typeof filterExceptions>[1]) => ExceptionQueueItem[];
   getExceptionStatsSummary: () => ReturnType<typeof getExceptionStats>;
   getExceptionsByType: (type: ExceptionType) => ExceptionQueueItem[];
 
   addDetailedAuditLog: (params: Omit<Parameters<typeof createDetailedAuditLog>[0], 'operatorId' | 'operatorRole'>) => DetailedAuditLog;
-  getDetailedAuditLogs: (filters?: { category?: string; roomId?: string; orderId?: string }) => DetailedAuditLog[];
+  getDetailedAuditLogs: (limitOrFilters?: number | { category?: string; roomId?: string; orderId?: string }) => DetailedAuditLog[];
 
-  generateHistoricalData: (roomIds: string[], daysBack: number) => HistoricalOccupancyRecord[];
+  generateHistoricalData: (roomIdsOrDays: string[] | number, daysBackParam?: number) => HistoricalOccupancyRecord[];
   generateCleaningSchedulesForRange: (startDate: string, endDate: string) => CleaningSchedule[];
   updateCleaningStatus: (scheduleId: string, status: CleaningSchedule['status'], notes?: string) => CleaningSchedule | null;
   
@@ -313,8 +314,17 @@ export const useBookingStore = create<BookingState>()(
 
       rebuildDerivedData: () => {
         const state = get();
-        const explanations = batchExplainAvailability(state.rooms, state.calendarStartDate, state.calendarEndDate, state.maintenances, state.locks, state.orders, state.channelConfigs, state.cleaningSchedules, state.calendarStatus);
-        const snapshots = calculateAllChannelSnapshots(state.rooms.map(r => r.id), state.calendarStartDate, state.calendarEndDate, state.orders, state.channelConfigs, state.orderChannelInfos);
+        const explanations = batchExplainAvailability(
+          state.rooms, state.calendarStartDate, state.calendarEndDate,
+          state.maintenances, state.locks, state.orders, state.channelConfigs,
+          state.cleaningSchedules, state.calendarStatus,
+          state.orderChannelInfos, state.releases
+        );
+        const snapshots = calculateAllChannelSnapshots(
+          state.rooms, state.calendarStartDate, state.calendarEndDate,
+          state.channelConfigs, state.orders, state.orderChannelInfos,
+          state.maintenances, state.locks, state.releases
+        );
         set({ availabilityExplanations: explanations, channelSnapshots: snapshots });
       },
       
@@ -733,7 +743,7 @@ export const useBookingStore = create<BookingState>()(
         const now = Date.now();
         const updated: ChannelConfig = existing
           ? { ...existing, ...config, updatedAt: now }
-          : createDefaultChannelConfig(roomId, channel, state.currentUserId);
+          : createDefaultChannelConfig(roomId, channel);
         set(s => ({
           channelConfigs: [...s.channelConfigs.filter(c => !(c.roomId === roomId && c.channel === channel)), updated],
         }));
@@ -753,26 +763,52 @@ export const useBookingStore = create<BookingState>()(
 
       getAllChannelSnapshots: () => get().channelSnapshots,
 
+      getChannelSnapshotsAt: (roomId, date) => {
+        const map = get().channelSnapshots;
+        const channels: ChannelType[] = ['direct', 'ota', 'corporate_longstay', 'event_buyout'];
+        return channels.map(ch => map.get(`${roomId}_${date}_${ch}`)).filter(Boolean) as ChannelInventorySnapshot[];
+      },
+
       checkChannelOversellForRoom: (roomId, date) => {
         const snapshots = Array.from(get().channelSnapshots.values()).filter(s => s.roomId === roomId && s.date === date);
         const oversold = snapshots.find(s => s.oversoldUnits > 0);
         return { hasOversell: !!oversold, oversoldUnits: oversold?.oversoldUnits || 0, channel: oversold?.channel };
       },
 
-      assignOrderChannel: (orderId, channel, commissionRate) => {
+      assignOrderChannel: (orderId, channel, channelOrderIdOrCommission, commissionAmount) => {
         const state = get();
         const order = state.orders.find(o => o.id === orderId);
         const channelConfig = state.channelConfigs.find(c => c.roomId === order?.roomId && c.channel === channel);
-        const commission = commissionRate ?? channelConfig?.commissionRate ?? 0;
+        
+        let channelOrderId: string | undefined;
+        let finalCommission: number;
+        
+        if (typeof channelOrderIdOrCommission === 'string') {
+          channelOrderId = channelOrderIdOrCommission;
+          if (typeof commissionAmount === 'number') {
+            finalCommission = commissionAmount;
+          } else {
+            const rate = channelConfig?.commissionRate ?? 0;
+            finalCommission = order ? (order.priceSnapshot.totalPrice * rate) : 0;
+          }
+        } else if (typeof channelOrderIdOrCommission === 'number') {
+          const rate = channelOrderIdOrCommission;
+          finalCommission = order ? (order.priceSnapshot.totalPrice * rate) : 0;
+        } else {
+          const rate = channelConfig?.commissionRate ?? 0;
+          finalCommission = order ? (order.priceSnapshot.totalPrice * rate) : 0;
+        }
+        
         const info: OrderChannelInfo = {
           orderId, channel,
-          commissionAmount: order ? (order.priceSnapshot.totalPrice * commission) : 0,
+          channelOrderId,
+          commissionAmount: finalCommission,
         };
         set(s => ({ orderChannelInfos: [...s.orderChannelInfos.filter(i => i.orderId !== orderId), info] }));
         get().addDetailedAuditLog({
           entityType: 'OrderChannelInfo', entityId: orderId, action: 'ASSIGNED', category: 'channel',
           oldValue: null, newValue: info, roomId: order?.roomId, orderId, channel,
-          changeSummary: `订单 ${order?.orderNo || orderId} 分配渠道：${channel}，佣金 ¥${info.commissionAmount.toFixed(2)}`,
+          changeSummary: `订单 ${order?.orderNo || orderId} 分配渠道：${channel}${channelOrderId ? `（单号：${channelOrderId}）` : ''}，佣金 ¥${finalCommission.toFixed(2)}`,
         });
         get().rebuildDerivedData();
       },
@@ -784,7 +820,7 @@ export const useBookingStore = create<BookingState>()(
         const suggestions = generateBulkPricingSuggestions(
           state.rooms.filter(r => roomIds.includes(r.id)), startDate, endDate,
           state.priceVersions, state.holidayPrices, state.maintenances,
-          state.cleaningSchedules, state.historicalOccupancies, state.orders
+          state.cleaningSchedules, state.historicalOccupancies
         );
         set(s => ({ pricingSuggestions: [...s.pricingSuggestions, ...suggestions] }));
         get().addDetailedAuditLog({
@@ -799,9 +835,14 @@ export const useBookingStore = create<BookingState>()(
         const state = get();
         const suggestion = state.pricingSuggestions.find(s => s.id === suggestionId);
         if (!suggestion || suggestion.status !== 'pending') return { success: false };
-        const applied = applyPricingSuggestion(suggestion, state.holidayPrices, state.currentUserId);
+        const applied = applyPricingSuggestion(suggestion, state.currentUserId);
         if (applied) {
-          get().applyEvent('HOLIDAY_PRICE_SET', applied);
+          const fullHolidayPrice: HolidayPrice = {
+            ...applied.holidayPrice,
+            id: `hp_${suggestion.roomId}_${suggestion.date}_${Date.now()}`,
+            createdAt: Date.now(),
+          };
+          get().applyEvent('HOLIDAY_PRICE_SET', fullHolidayPrice);
           set(s => ({
             pricingSuggestions: s.pricingSuggestions.map(s2 =>
               s2.id === suggestionId ? { ...s2, status: 'applied' as const, appliedAt: Date.now(), appliedBy: s.currentUserId } : s2
@@ -809,11 +850,11 @@ export const useBookingStore = create<BookingState>()(
           }));
           get().addDetailedAuditLog({
             entityType: 'PricingSuggestion', entityId: suggestionId, action: 'APPLIED', category: 'pricing',
-            oldValue: suggestion, newValue: { status: 'applied', holidayPrice: applied }, roomId: suggestion.roomId,
+            oldValue: suggestion, newValue: { status: 'applied', holidayPrice: fullHolidayPrice }, roomId: suggestion.roomId,
             changeSummary: `应用调价建议：${suggestion.suggestionType}，${suggestion.currentPrice.toFixed(0)} → ${suggestion.suggestedPrice.toFixed(0)}（${(suggestion.adjustmentPercent > 0 ? '+' : '')}${suggestion.adjustmentPercent.toFixed(1)}%），置信度 ${(suggestion.confidenceScore * 100).toFixed(0)}%`,
           });
           get().recalculateUnlockedOrderPrices();
-          return { success: true, holidayPrice: applied };
+          return { success: true, holidayPrice: fullHolidayPrice };
         }
         return { success: false };
       },
@@ -859,20 +900,24 @@ export const useBookingStore = create<BookingState>()(
         return newItems;
       },
 
-      updateException: (exceptionId, status, resolution) => {
+      updateException: (exceptionId, status, operatorId, operatorRole, note) => {
         const state = get();
         const exception = state.exceptionQueue.find(e => e.id === exceptionId);
         if (!exception) return null;
-        const updated = updateExceptionStatus(exception, status, state.currentUserId, state.currentRole, resolution);
+        const opId = operatorId || state.currentUserId;
+        const opRole = operatorRole || state.currentRole;
+        const updated = updateExceptionStatus(exception, status, opId, opRole, note);
         set(s => ({ exceptionQueue: s.exceptionQueue.map(e => e.id === exceptionId ? updated : e) }));
         return updated;
       },
 
-      assignExceptionTo: (exceptionId, assigneeId) => {
+      assignExceptionTo: (exceptionId, assigneeId, operatorId, operatorRole, note) => {
         const state = get();
         const exception = state.exceptionQueue.find(e => e.id === exceptionId);
         if (!exception) return null;
-        const updated = assignException(exception, assigneeId, state.currentUserId, state.currentRole);
+        const opId = operatorId || state.currentUserId;
+        const opRole = operatorRole || state.currentRole;
+        const updated = assignException(exception, assigneeId, opId, opRole, note);
         set(s => ({ exceptionQueue: s.exceptionQueue.map(e => e.id === exceptionId ? updated : e) }));
         return updated;
       },
@@ -890,28 +935,46 @@ export const useBookingStore = create<BookingState>()(
         return log;
       },
 
-      getDetailedAuditLogs: (filters = {}) => get().detailedAuditLogs.filter(log => {
-        if (filters.category && log.category !== filters.category) return false;
-        if (filters.roomId && log.roomId !== filters.roomId) return false;
-        if (filters.orderId && log.orderId !== filters.orderId) return false;
-        return true;
-      }),
-
-      generateHistoricalData: (roomIds, daysBack) => {
+      getDetailedAuditLogs: (limitOrFilters = {}) => {
         const state = get();
+        let filtered = state.detailedAuditLogs;
+        if (typeof limitOrFilters === 'object') {
+          const filters = limitOrFilters;
+          filtered = filtered.filter(log => {
+            if (filters.category && log.category !== filters.category) return false;
+            if (filters.roomId && log.roomId !== filters.roomId) return false;
+            if (filters.orderId && log.orderId !== filters.orderId) return false;
+            return true;
+          });
+        }
+        if (typeof limitOrFilters === 'number') return filtered.slice(0, limitOrFilters);
+        return filtered;
+      },
+
+      generateHistoricalData: (roomIdsOrDays, daysBackParam) => {
+        const state = get();
+        let roomIds: string[];
+        let daysBack: number;
+        if (typeof roomIdsOrDays === 'number') {
+          roomIds = state.rooms.map(r => r.id);
+          daysBack = roomIdsOrDays;
+        } else {
+          roomIds = roomIdsOrDays;
+          daysBack = daysBackParam ?? 30;
+        }
         const records = generateHistoricalOccupancyData(state.rooms.filter(r => roomIds.includes(r.id)), daysBack);
         set(s => ({ historicalOccupancies: [...s.historicalOccupancies, ...records] }));
         get().addDetailedAuditLog({
           entityType: 'HistoricalOccupancy', entityId: `gen_${Date.now()}`, action: 'GENERATED', category: 'system',
           oldValue: null, newValue: { count: records.length, roomIds, daysBack },
-          changeSummary: `生成 ${records.length} 条历史入住率数据，回溯 ${daysBack} 天`,
+          changeSummary: `生成 ${records.length} 条历史入住率数据，回溯 ${daysBack} 天，共 ${roomIds.length} 间房`,
         });
         return records;
       },
 
       generateCleaningSchedulesForRange: (startDate, endDate) => {
         const state = get();
-        const schedules = generateCleaningSchedule(state.rooms, startDate, endDate, state.orders);
+        const schedules = generateCleaningSchedule(state.rooms, startDate, endDate);
         const existingKeys = new Set(state.cleaningSchedules.map(s => `${s.roomId}_${s.date}`));
         const newSchedules = schedules.filter(s => !existingKeys.has(`${s.roomId}_${s.date}`));
         if (newSchedules.length > 0) {
@@ -1024,7 +1087,7 @@ export const useBookingStore = create<BookingState>()(
           rooms: state.rooms.filter(r => exportRooms.includes(r.id)),
           calendarData: Array.from(state.calendarStatus.entries())
             .filter(([k]) => exportRooms.some(rid => k.startsWith(rid + '_')))
-            .map(([k, v]) => ({ key, ...v })),
+            .map(([k, v]) => ({ key: k, ...v })),
           holidayPrices: state.holidayPrices.filter(hp => exportRooms.includes(hp.roomId)),
           maintenances: state.maintenances.filter(m => exportRooms.includes(m.roomId)),
           locks: state.locks.filter(l => exportRooms.includes(l.roomId)),

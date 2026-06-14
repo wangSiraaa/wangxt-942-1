@@ -175,7 +175,8 @@ export const assignException = (
   exception: ExceptionQueueItem,
   assigneeId: string,
   operatorId: string,
-  operatorRole: UserRole
+  operatorRole: UserRole,
+  note?: string
 ): ExceptionQueueItem => {
   const now = Date.now();
   return {
@@ -188,7 +189,7 @@ export const assignException = (
         timestamp: now,
         operatorId,
         action: 'ASSIGNED',
-        note: `${operatorRole}分配给用户${assigneeId}`,
+        note: note ? `${note}（${operatorRole}分配给用户${assigneeId}）` : `${operatorRole}分配给用户${assigneeId}`,
       },
     ],
   };
