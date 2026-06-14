@@ -75,11 +75,11 @@ interface BookingState {
   updateRoom: (id: string, data: Partial<Room>) => void;
   
   createPriceVersion: (data: Omit<PriceVersion, 'id' | 'createdAt'>) => PriceVersion;
-  activatePriceVersion: (id: string) => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
+  activatePriceVersion: (id: string) => { updatedCount: number; affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> };
   archivePriceVersion: (id: string) => void;
-  setHolidayPrice: (data: Omit<HolidayPrice, 'id' | 'createdAt'>) => { holidayPrice: HolidayPrice; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> } };
-  setLongStayDiscount: (data: Omit<LongStayDiscount, 'id' | 'createdAt'>) => { discount: LongStayDiscount; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> } };
-  batchUpdatePrices: (roomIds: string[], startDate: string, endDate: string, adjustment: number, type: 'fixed' | 'percent') => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
+  setHolidayPrice: (data: Omit<HolidayPrice, 'id' | 'createdAt'>) => { holidayPrice: HolidayPrice; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> } };
+  setLongStayDiscount: (data: Omit<LongStayDiscount, 'id' | 'createdAt'>) => { discount: LongStayDiscount; recalcResult: { updatedCount: number; affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> } };
+  batchUpdatePrices: (roomIds: string[], startDate: string, endDate: string, adjustment: number, type: 'fixed' | 'percent') => { updatedCount: number; affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> };
   protectedBatchUpdatePrices: (roomIds: string[], startDate: string, endDate: string, adjustment: number, type: 'fixed' | 'percent') => BatchPriceProtectionResult & { updatedPrices: HolidayPrice[] };
   validatePriceAdjustmentParams: (adjustment: number, type: 'fixed' | 'percent', currentAvgPrice: number) => { valid: boolean; reason?: string };
   findProtectedOrdersForRange: (roomIds: string[], startDate: string, endDate: string) => ReturnType<typeof findProtectedOrders>;
@@ -104,7 +104,7 @@ interface BookingState {
   calculatePriceForBooking: (roomId: string, checkin: string, checkout: string, existingOrderId?: string) => PriceCalculationResult | null;
   calculateRefundForOrder: (orderId: string, reason: RefundRecord['reason']) => RefundCalculationResult | null;
   getDynamicOrderPrice: (orderId: string) => { currentPrice: PriceCalculationResult; snapshotPrice: PriceCalculationResult; isLocked: boolean; priceChanged: boolean };
-  recalculateUnlockedOrderPrices: () => { updatedCount: number; affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> };
+  recalculateUnlockedOrderPrices: () => { updatedCount: number; affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> };
   getAvailability: (roomId: string, checkin: string, checkout: string) => ReturnType<typeof checkAvailability>;
   getConflicts: () => ConflictInfo[];
   getRevenueForecast: (startDate: string, endDate: string) => RevenueForecast[];
@@ -359,7 +359,8 @@ export const useBookingStore = create<BookingState>()(
       },
       
       batchUpdatePrices: (roomIds, startDate, endDate, adjustment, type) => {
-        const newPrices = calculateBatchPriceUpdate(roomIds, startDate, endDate, adjustment, type, get().holidayPrices);
+        const state = get();
+        const newPrices = calculateBatchPriceUpdate(roomIds, startDate, endDate, adjustment, type, state.holidayPrices, state.rooms, state.priceVersions);
         get().applyEvent('BATCH_PRICE_UPDATED', newPrices);
         return get().recalculateUnlockedOrderPrices();
       },
@@ -650,10 +651,11 @@ export const useBookingStore = create<BookingState>()(
         const room = state.rooms.find(r => r.id === order.roomId);
         if (!room) throw new Error('房间不存在');
         const isLocked = order.lockedPrice || ['paid', 'locked', 'checkin', 'checkout', 'completed'].includes(order.status);
+        const snapshotSubtotal = order.priceSnapshot.basePrice + order.priceSnapshot.holidayPremium + order.priceSnapshot.weekendPremium;
         const snapshotPrice: PriceCalculationResult = {
           basePrice: order.priceSnapshot.basePrice, holidayPremium: order.priceSnapshot.holidayPremium,
           weekendPremium: order.priceSnapshot.weekendPremium, longStayDiscount: order.priceSnapshot.longStayDiscount,
-          otherDiscounts: order.priceSnapshot.otherDiscounts, subtotal: order.priceSnapshot.totalPrice,
+          otherDiscounts: order.priceSnapshot.otherDiscounts, subtotal: snapshotSubtotal,
           benefitSource: order.priceSnapshot.benefitSource, benefitAmount: order.priceSnapshot.benefitAmount,
           totalPrice: order.priceSnapshot.totalPrice, dailyBreakdown: [],
         };
@@ -667,7 +669,7 @@ export const useBookingStore = create<BookingState>()(
       
       recalculateUnlockedOrderPrices: () => {
         const state = get();
-        const affectedOrders: Array<{ orderId: string; oldPrice: number; newPrice: number }> = [];
+        const affectedOrders: Array<{ orderId: string; orderNo: string; guestName: string; oldPrice: number; newPrice: number }> = [];
         for (const order of state.orders) {
           const isLocked = order.lockedPrice || ['paid', 'locked', 'checkin', 'checkout', 'completed'].includes(order.status);
           if (isLocked) continue;
@@ -685,7 +687,7 @@ export const useBookingStore = create<BookingState>()(
                 totalPrice: newCalc.totalPrice, benefitSource: newCalc.benefitSource, benefitAmount: newCalc.benefitAmount,
               },
             });
-            affectedOrders.push({ orderId: order.id, oldPrice, newPrice: newCalc.totalPrice });
+            affectedOrders.push({ orderId: order.id, orderNo: order.orderNo, guestName: order.guestName, oldPrice, newPrice: newCalc.totalPrice });
           }
         }
         return { updatedCount: affectedOrders.length, affectedOrders };

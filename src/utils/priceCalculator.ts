@@ -143,16 +143,27 @@ export const calculateBatchPriceUpdate = (
   endDate: string,
   priceAdjustment: number,
   adjustmentType: 'fixed' | 'percent',
-  existingPrices: HolidayPrice[]
+  existingPrices: HolidayPrice[],
+  rooms: { id: string; basePrice: number }[],
+  priceVersions: PriceVersion[]
 ): HolidayPrice[] => {
   const dates = getDatesForNights(startDate, endDate);
   const newPrices: HolidayPrice[] = [];
+  const roomMap = new Map(rooms.map(r => [r.id, r]));
 
   for (const roomId of roomIds) {
+    const room = roomMap.get(roomId);
+    if (!room) continue;
+
     for (const date of dates) {
       const existing = existingPrices.find(hp => hp.roomId === roomId && hp.date === date);
-      let newPrice = existing?.price || 0;
       
+      const activeVersion = priceVersions.find(
+        pv => pv.roomId === roomId && pv.status === 'active' && isDateInRange(date, pv.startDate, pv.endDate)
+      );
+      const basePrice = existing?.price ?? activeVersion?.basePrice ?? room.basePrice;
+      
+      let newPrice = basePrice;
       if (adjustmentType === 'fixed') {
         newPrice = Math.max(0, newPrice + priceAdjustment);
       } else {
@@ -160,7 +171,7 @@ export const calculateBatchPriceUpdate = (
       }
 
       newPrices.push({
-        id: existing?.id || `hp_${roomId}_${date}_${Date.now()}`,
+        id: existing?.id || `hp_${roomId}_${date}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         roomId,
         date,
         price: Math.round(newPrice * 100) / 100,

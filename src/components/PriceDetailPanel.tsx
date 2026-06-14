@@ -57,11 +57,11 @@ export default function PriceDetailPanel() {
     const result = batchUpdatePrices(batchRoomIds, batchStartDate, batchEndDate, adjustmentValue, adjustmentType);
     if (result.updatedCount > 0) {
       const changes = result.affectedOrders.map(o => 
-        `订单 ${o.orderId.slice(-6)}: ¥${o.oldPrice.toFixed(0)} → ¥${o.newPrice.toFixed(0)}`
+        `${o.orderNo}（${o.guestName}）: ¥${o.oldPrice.toFixed(0)} → ¥${o.newPrice.toFixed(0)}`
       ).join('\n');
-      alert(`批量价格调整已应用\n\n已自动更新 ${result.updatedCount} 个未锁价订单的价格：\n${changes}`);
+      alert(`批量价格调整已应用\n\n价格调整范围：${batchStartDate} ~ ${batchEndDate}\n调整方式：${adjustmentType === 'fixed' ? (adjustmentValue >= 0 ? '+' : '') + '¥' + adjustmentValue + '/晚' : (adjustmentValue >= 0 ? '+' : '') + adjustmentValue + '%'}\n\n已自动更新 ${result.updatedCount} 个未锁价订单的价格：\n${changes}`);
     } else {
-      alert('批量价格调整已应用\n\n没有需要更新的未锁价订单');
+      alert(`批量价格调整已应用\n\n价格调整范围：${batchStartDate} ~ ${batchEndDate}\n调整方式：${adjustmentType === 'fixed' ? (adjustmentValue >= 0 ? '+' : '') + '¥' + adjustmentValue + '/晚' : (adjustmentValue >= 0 ? '+' : '') + adjustmentValue + '%'}\n\n没有需要更新的未锁价订单`);
     }
   };
 
