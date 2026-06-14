@@ -1,5 +1,32 @@
 export type UserRole = 'host' | 'guest' | 'operator';
 
+export type ChannelType = 'direct' | 'ota' | 'corporate_longstay' | 'event_buyout';
+
+export type SaleStatus = 'available' | 'limited' | 'unavailable';
+
+export type PricingSuggestionType = 'raise' | 'lower' | 'hold' | 'restrict';
+
+export type ExceptionType = 
+  | 'channel_oversell' 
+  | 'maintenance_extended' 
+  | 'cleaning_incomplete' 
+  | 'refund_failed'
+  | 'price_conflict'
+  | 'inventory_conflict';
+
+export type ExceptionSeverity = 'critical' | 'warning' | 'info';
+
+export type ExceptionStatus = 'pending' | 'processing' | 'resolved' | 'ignored';
+
+export type AuditActionCategory = 
+  | 'inventory' 
+  | 'pricing' 
+  | 'order' 
+  | 'channel' 
+  | 'maintenance' 
+  | 'exception' 
+  | 'system';
+
 export type OrderStatus = 
   | 'pending' 
   | 'confirmed' 
@@ -268,4 +295,190 @@ export interface RevenueForecast {
   totalRooms: number;
   occupancyRate: number;
   avgDailyRate: number;
+}
+
+export interface ChannelConfig {
+  id: string;
+  roomId: string;
+  channel: ChannelType;
+  channelName: string;
+  enabled: boolean;
+  totalInventory: number;
+  reservedInventory: number;
+  minPrice?: number;
+  maxPrice?: number;
+  oversellThreshold: number;
+  commissionRate: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChannelInventorySnapshot {
+  date: string;
+  roomId: string;
+  channel: ChannelType;
+  totalUnits: number;
+  soldUnits: number;
+  reservedUnits: number;
+  availableUnits: number;
+  oversoldUnits: number;
+}
+
+export interface PricingFactor {
+  factor: 'holiday' | 'weekend' | 'maintenance_risk' | 'cleaning_capacity' | 'historical_occupancy' | 'competitor_price' | 'demand_forecast';
+  weight: number;
+  value: number;
+  description: string;
+}
+
+export interface PricingSuggestion {
+  id: string;
+  roomId: string;
+  date: string;
+  currentPrice: number;
+  suggestedPrice: number;
+  suggestionType: PricingSuggestionType;
+  adjustmentPercent: number;
+  confidenceScore: number;
+  factors: PricingFactor[];
+  rationale: string;
+  createdAt: number;
+  appliedAt?: number;
+  appliedBy?: string;
+  status: 'pending' | 'applied' | 'rejected' | 'expired';
+}
+
+export interface AvailabilityExplanation {
+  saleStatus: SaleStatus;
+  primaryReason: string;
+  detailedReasons: string[];
+  factors: {
+    maintenance: boolean;
+    locked: boolean;
+    soldOut: boolean;
+    channelRestricted: boolean;
+    inventoryExhausted: boolean;
+    cleaningPending: boolean;
+    oversellRisk: boolean;
+  };
+  availableInventory: number;
+  totalInventory: number;
+  conflictingOrders?: string[];
+  conflictingMaintenances?: string[];
+  conflictingLocks?: string[];
+}
+
+export interface RescheduleValidationResult {
+  allowed: boolean;
+  priceChanged: boolean;
+  oldPrice: number;
+  newPrice: number;
+  priceDiff: number;
+  lockPriceViolation: boolean;
+  benefitsStillValid: boolean;
+  expiredBenefits: BenefitSource[];
+  refundRequired: boolean;
+  refundAmount: number;
+  additionalPayment: number;
+  cancellationFees: number;
+  conflicts: string[];
+  newAvailabilityAvailable: boolean;
+}
+
+export interface PartialCancelValidationResult {
+  allowed: boolean;
+  refundAmount: number;
+  cancelFee: number;
+  benefitDeduction: number;
+  remainingNights: number;
+  cancelledNights: number;
+  remainingPrice: number;
+  priceLocked: boolean;
+  conflicts: string[];
+}
+
+export interface BatchPriceProtectionResult {
+  totalAffectedDates: number;
+  protectedDates: number;
+  updatedDates: number;
+  skippedOrders: Array<{
+    orderId: string;
+    orderNo: string;
+    lockedPrice: number;
+    wouldBePrice: number;
+    diff: number;
+  }>;
+  updatedHolidayPrices: Array<{
+    roomId: string;
+    date: string;
+    oldPrice: number;
+    newPrice: number;
+  }>;
+}
+
+export interface ExceptionQueueItem {
+  id: string;
+  type: ExceptionType;
+  severity: ExceptionSeverity;
+  status: ExceptionStatus;
+  title: string;
+  description: string;
+  roomId?: string;
+  orderId?: string;
+  channel?: ChannelType;
+  date?: string;
+  metadata: Record<string, any>;
+  assigneeId?: string;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt?: number;
+  resolvedBy?: string;
+  resolution?: string;
+  auditTrail: Array<{
+    timestamp: number;
+    operatorId: string;
+    action: string;
+    note?: string;
+  }>;
+}
+
+export interface DetailedAuditLog extends AuditLog {
+  category: AuditActionCategory;
+  channel?: ChannelType;
+  roomId?: string;
+  orderId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  beforeState?: any;
+  afterState?: any;
+  changeSummary: string;
+  relatedEntityIds?: string[];
+}
+
+export interface HistoricalOccupancyRecord {
+  date: string;
+  roomId: string;
+  occupancyRate: number;
+  avgDailyRate: number;
+  revenue: number;
+  channel: ChannelType;
+}
+
+export interface CleaningSchedule {
+  id: string;
+  roomId: string;
+  date: string;
+  scheduledTime: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  assigneeId?: string;
+  completedAt?: number;
+  notes?: string;
+}
+
+export interface OrderChannelInfo {
+  orderId: string;
+  channel: ChannelType;
+  channelOrderId?: string;
+  commissionAmount: number;
+  channelData?: Record<string, any>;
 }

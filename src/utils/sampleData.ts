@@ -1,6 +1,6 @@
 import { useBookingStore } from '../store/bookingStore';
 import { addDays, getToday } from '../utils/dateUtils';
-import type { MaintenanceType, BenefitSource } from '../types';
+import type { MaintenanceType, BenefitSource, ChannelType, ExceptionType, PricingSuggestionType } from '../types';
 
 export const initializeSampleData = () => {
   let store = useBookingStore.getState();
@@ -147,6 +147,9 @@ export const initializeSampleData = () => {
     
     const priceCalc = store.calculatePriceForBooking(room.id, checkin, checkout)!;
     
+    const channelsForBookings: ChannelType[] = ['direct', 'ota', 'corporate_longstay', 'direct', 'ota', 'event_buyout'];
+    const orderChannel = channelsForBookings[bookings.indexOf(booking)];
+    
     const order = store.createOrder({
       roomId: room.id,
       guestId: guestIds[booking.guestIdx],
@@ -166,6 +169,7 @@ export const initializeSampleData = () => {
         benefitAmount: 0,
       },
       paidAmount: booking.paid ? priceCalc.totalPrice : 0,
+      channel: orderChannel,
     });
     
     if (booking.status !== 'pending') {
@@ -181,6 +185,70 @@ export const initializeSampleData = () => {
       store.updateOrderStatus(order.id, 'checkout');
       store.updateOrderStatus(order.id, 'completed');
     }
+  }
+  
+  for (const room of rooms) {
+    store.initDefaultChannelConfigs(room.id);
+    store.createOrUpdateChannelConfig({
+      roomId: room.id,
+      channel: 'ota',
+      channelName: '携程/美团OTA',
+      enabled: true,
+      totalInventory: 1,
+      reservedInventory: 0,
+      minPrice: Math.round(room.basePrice * 0.9),
+      maxPrice: Math.round(room.basePrice * 2.5),
+      oversellThreshold: 0,
+      commissionRate: 0.15,
+    });
+    store.createOrUpdateChannelConfig({
+      roomId: room.id,
+      channel: 'corporate_longstay',
+      channelName: '企业长租协议',
+      enabled: true,
+      totalInventory: 2,
+      reservedInventory: 1,
+      minPrice: Math.round(room.basePrice * 0.7),
+      maxPrice: Math.round(room.basePrice * 1.2),
+      oversellThreshold: 0,
+      commissionRate: 0.05,
+    });
+    store.createOrUpdateChannelConfig({
+      roomId: room.id,
+      channel: 'event_buyout',
+      channelName: '临时包栋/团建',
+      enabled: true,
+      totalInventory: rooms.length,
+      reservedInventory: 0,
+      minPrice: Math.round(room.basePrice * 1.5),
+      maxPrice: Math.round(room.basePrice * 4),
+      oversellThreshold: 0,
+      commissionRate: 0.08,
+    });
+  }
+  
+  store.generateHistoricalData(90);
+  store.generateCleaningSchedulesForRange(addDays(today, -3), addDays(today, 14));
+  
+  const firstOrder = store.orders[0];
+  if (firstOrder) {
+    store.assignOrderChannel(firstOrder.id, 'ota', 'OTA20260115001', Math.round(firstOrder.priceSnapshot.totalPrice * 0.15));
+  }
+  const secondOrder = store.orders[2];
+  if (secondOrder) {
+    store.assignOrderChannel(secondOrder.id, 'corporate_longstay', 'CORP202601001', Math.round(secondOrder.priceSnapshot.totalPrice * 0.05));
+  }
+  
+  try {
+    store.generatePricingSuggestions(rooms.map(r => r.id), addDays(today, 1), addDays(today, 30));
+  } catch (e) {
+    console.log('调价建议生成跳过:', e);
+  }
+  
+  try {
+    store.runExceptionDetection();
+  } catch (e) {
+    console.log('异常检测跳过:', e);
   }
   
   store.replayEvents();

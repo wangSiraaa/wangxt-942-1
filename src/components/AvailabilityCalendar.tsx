@@ -3,8 +3,8 @@ import { useBookingStore } from '../store/bookingStore';
 import { getMonthMatrix, getMonthName, getWeekdayNames, formatDate, isSameDay, addDays, getToday, parseDate, getNightsBetween } from '../utils/dateUtils';
 import { getOrderStatusColor } from '../utils/orderStateMachine';
 import { calculatePrice } from '../utils/priceCalculator';
-import type { CalendarDayStatus, BenefitSource } from '../types';
-import { ChevronLeft, ChevronRight, Wrench, Lock, Unlock, AlertTriangle, AlertCircle, Info, ShoppingCart, X } from 'lucide-react';
+import type { CalendarDayStatus, BenefitSource, AvailabilityExplanation, ChannelInventorySnapshot, ExceptionType } from '../types';
+import { ChevronLeft, ChevronRight, Wrench, Lock, Unlock, AlertTriangle, AlertCircle, Info, ShoppingCart, X, HelpCircle, TrendingUp, TrendingDown, Zap, Users, Calendar as CalendarIcon, Shield } from 'lucide-react';
 
 interface CalendarDayCellProps {
   date: string | null;
@@ -16,9 +16,48 @@ interface CalendarDayCellProps {
   onContextMenu: (e: React.MouseEvent) => void;
 }
 
+const channelNames: Record<string, string> = {
+  direct: '直销',
+  ota: 'OTA',
+  corporate_longstay: '企业长租',
+  event_buyout: '包栋',
+};
+
 const CalendarDayCell = ({ date, roomId, status, isSelected, isInRange, onClick, onContextMenu }: CalendarDayCellProps) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+  
+  const explanation: AvailabilityExplanation | null = useMemo(() => {
+    if (!date) return null;
+    try {
+      return useBookingStore.getState().getAvailabilityExplanation(roomId, date);
+    } catch (e) {
+      return null;
+    }
+  }, [date, roomId]);
+  
+  const channelSnapshots: ChannelInventorySnapshot[] = useMemo(() => {
+    if (!date) return [];
+    try {
+      const snaps = useBookingStore.getState().getAllChannelSnapshots(roomId, date);
+      return snaps || [];
+    } catch (e) {
+      return [];
+    }
+  }, [date, roomId]);
+  
+  const exceptions = useMemo(() => {
+    if (!date) return [];
+    try {
+      return useBookingStore.getState().getExceptionQueue().filter(
+        e => e.roomId === roomId && e.date === date && e.status !== 'resolved' && e.status !== 'ignored'
+      );
+    } catch (e) {
+      return [];
+    }
+  }, [date, roomId]);
+
   if (!date) {
-    return <div className="h-16 border border-gray-100 bg-gray-50" />;
+    return <div className="h-20 border border-gray-100 bg-gray-50" />;
   }
 
   const day = parseInt(date.split('-')[2]);
@@ -29,54 +68,87 @@ const CalendarDayCell = ({ date, roomId, status, isSelected, isInRange, onClick,
   let bgColor = 'bg-white';
   let borderColor = 'border-gray-200';
   let textColor = 'text-gray-900';
-
-  if (isPast) {
-    bgColor = 'bg-gray-50';
-    textColor = 'text-gray-400';
-  } else if (!status?.available) {
-    if (status?.maintenanceType === 'full_day') {
-      bgColor = 'bg-red-100';
-      borderColor = 'border-red-300';
-    } else if (status?.maintenanceType) {
-      bgColor = 'bg-orange-100';
-      borderColor = 'border-orange-300';
-    } else if (status?.isLocked && !status?.isReleased) {
-      bgColor = 'bg-purple-100';
-      borderColor = 'border-purple-300';
-    } else if (status?.orderIds.length > 0) {
-      bgColor = 'bg-blue-100';
-      borderColor = 'border-blue-300';
+  
+  if (explanation) {
+    if (explanation.saleStatus === 'unavailable') {
+      const { factors } = explanation;
+      if (factors.maintenance) {
+        bgColor = 'bg-red-100';
+        borderColor = 'border-red-400';
+      } else if (factors.locked) {
+        bgColor = 'bg-purple-100';
+        borderColor = 'border-purple-400';
+      } else if (factors.soldOut || factors.inventoryExhausted) {
+        bgColor = 'bg-blue-100';
+        borderColor = 'border-blue-400';
+      } else if (factors.cleaningPending) {
+        bgColor = 'bg-amber-100';
+        borderColor = 'border-amber-400';
+      } else if (factors.oversellRisk) {
+        bgColor = 'bg-rose-100';
+        borderColor = 'border-rose-500';
+      } else {
+        bgColor = 'bg-gray-200';
+      }
+    } else if (explanation.saleStatus === 'limited') {
+      bgColor = 'bg-amber-50';
+      borderColor = 'border-amber-400';
+      textColor = 'text-amber-900';
     } else {
-      bgColor = 'bg-gray-200';
+      if (status?.isHoliday) bgColor = 'bg-yellow-50';
+      else if (status?.isWeekend) bgColor = 'bg-amber-50';
+    }
+  } else {
+    if (isPast) {
+      bgColor = 'bg-gray-50';
+      textColor = 'text-gray-400';
+    } else if (!status?.available) {
+      if (status?.maintenanceType === 'full_day') { bgColor = 'bg-red-100'; borderColor = 'border-red-300'; }
+      else if (status?.maintenanceType) { bgColor = 'bg-orange-100'; borderColor = 'border-orange-300'; }
+      else if (status?.isLocked && !status?.isReleased) { bgColor = 'bg-purple-100'; borderColor = 'border-purple-300'; }
+      else if (status?.orderIds.length > 0) { bgColor = 'bg-blue-100'; borderColor = 'border-blue-300'; }
+      else bgColor = 'bg-gray-200';
+    } else {
+      if (status?.isHoliday) bgColor = 'bg-yellow-50';
+      if (status?.isWeekend) bgColor = 'bg-amber-50';
     }
   }
 
-  if (status?.isHoliday && status?.available) {
-    bgColor = 'bg-yellow-50';
-  }
-  if (status?.isWeekend && status?.available) {
-    bgColor = 'bg-amber-50';
-  }
-
   if (isSelected) {
-    borderColor = 'border-indigo-500';
+    borderColor = 'border-indigo-500 ring-2 ring-indigo-200';
   } else if (isInRange) {
     borderColor = 'border-indigo-300';
   }
 
   if (status?.conflicts && status.conflicts.length > 0) {
-    borderColor = 'border-red-500';
+    borderColor = 'border-red-500 ring-2 ring-red-200';
   }
+  
+  if (exceptions.length > 0) {
+    const criticalEx = exceptions.find(e => e.severity === 'critical');
+    if (criticalEx) {
+      borderColor = 'border-rose-600 ring-2 ring-rose-200';
+    } else {
+      borderColor = 'border-orange-500 ring-2 ring-orange-200';
+    }
+  }
+
+  const oversoldChannel = channelSnapshots.find(s => s.oversoldUnits > 0);
+  const hasOversell = !!oversoldChannel || (explanation?.factors.oversellRisk);
+  
+  const availableChannels = channelSnapshots.filter(s => s.availableUnits > 0);
 
   return (
     <div
-      className={`h-16 border ${bgColor} ${borderColor} p-1 cursor-pointer hover:shadow-md transition-all relative ${textColor} text-xs`}
+      className={`h-20 border ${bgColor} ${borderColor} p-1 cursor-pointer hover:shadow-md transition-all relative ${textColor} text-xs group`}
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
     >
       <div className="flex justify-between items-start">
         <span className={`font-medium ${isToday ? 'text-indigo-600 font-bold' : ''}`}>{day}</span>
-        <div className="flex gap-0.5">
+        <div className="flex gap-0.5 items-center">
           {status?.maintenanceType && (
             <Wrench className={`w-3 h-3 ${status.maintenanceType === 'full_day' ? 'text-red-600' : 'text-orange-600'}`} />
           )}
@@ -89,32 +161,165 @@ const CalendarDayCell = ({ date, roomId, status, isSelected, isInRange, onClick,
           {status?.conflicts && status.conflicts.length > 0 && (
             <AlertTriangle className="w-3 h-3 text-red-600" />
           )}
+          {hasOversell && (
+            <AlertCircle className="w-3 h-3 text-rose-600 animate-pulse" />
+          )}
+          {explanation && (
+            <HelpCircle className="w-3 h-3 text-gray-400 group-hover:text-blue-500" />
+          )}
         </div>
       </div>
+      
       <div className="mt-1">
-        {status?.available && (
-          <span className="text-xs font-medium text-green-700">¥{status.price}</span>
+        {status?.available && explanation?.saleStatus !== 'unavailable' && (
+          <span className={`text-xs font-medium ${explanation?.saleStatus === 'limited' ? 'text-amber-700' : 'text-green-700'}`}>
+            ¥{status.price}
+          </span>
         )}
-        {status?.orderIds.length > 0 && (
-          <div className="flex flex-wrap gap-0.5 mt-0.5">
-            {status.orderIds.slice(0, 2).map(orderId => (
-              <span key={orderId} className={`text-[10px] px-1 rounded ${getOrderStatusColor(
-                useBookingStore.getState().orders.find(o => o.id === orderId)?.status || 'pending'
-              )}`}>
-                {useBookingStore.getState().orders.find(o => o.id === orderId)?.orderNo.slice(-4)}
-              </span>
-            ))}
-            {status.orderIds.length > 2 && (
-              <span className="text-[10px] text-gray-500">+{status.orderIds.length - 2}</span>
-            )}
-          </div>
+        {explanation?.saleStatus === 'limited' && (
+          <span className="ml-1 text-[10px] text-amber-600 font-medium">限售</span>
+        )}
+        {explanation?.saleStatus === 'unavailable' && !isPast && (
+          <span className="text-[10px] text-gray-500 font-medium">
+            {explanation.primaryReason}
+          </span>
         )}
       </div>
+      
+      {channelSnapshots.length > 0 && explanation?.saleStatus !== 'unavailable' && !isPast && (
+        <div className="flex gap-0.5 mt-0.5 flex-wrap">
+          {availableChannels.slice(0, 3).map(snap => (
+            <span key={snap.channel} className={`text-[9px] px-1 rounded ${
+              snap.oversoldUnits > 0 ? 'bg-rose-200 text-rose-800' :
+              snap.channel === 'direct' ? 'bg-green-100 text-green-700' :
+              snap.channel === 'ota' ? 'bg-blue-100 text-blue-700' :
+              snap.channel === 'corporate_longstay' ? 'bg-indigo-100 text-indigo-700' :
+              'bg-purple-100 text-purple-700'
+            }`}>
+              {channelNames[snap.channel]}{snap.availableUnits}
+            </span>
+          ))}
+          {availableChannels.length > 3 && (
+            <span className="text-[9px] text-gray-500">+{availableChannels.length - 3}</span>
+          )}
+        </div>
+      )}
+      
+      {status?.orderIds.length > 0 && (
+        <div className="flex flex-wrap gap-0.5 mt-0.5">
+          {status.orderIds.slice(0, 1).map(orderId => (
+            <span key={orderId} className={`text-[9px] px-1 rounded ${getOrderStatusColor(
+              useBookingStore.getState().orders.find(o => o.id === orderId)?.status || 'pending'
+            )}`}>
+              {useBookingStore.getState().orders.find(o => o.id === orderId)?.orderNo.slice(-4)}
+            </span>
+          ))}
+          {status.orderIds.length > 1 && (
+            <span className="text-[9px] text-gray-500">+{status.orderIds.length - 1}</span>
+          )}
+        </div>
+      )}
+      
       {status?.maintenanceType === 'half_day_morning' && (
-        <div className="absolute top-0 left-0 w-1/2 h-full bg-orange-200 opacity-30" />
+        <div className="absolute top-0 left-0 w-1/2 h-full bg-orange-200 opacity-30 pointer-events-none" />
       )}
       {status?.maintenanceType === 'half_day_afternoon' && (
-        <div className="absolute top-0 right-0 w-1/2 h-full bg-orange-200 opacity-30" />
+        <div className="absolute top-0 right-0 w-1/2 h-full bg-orange-200 opacity-30 pointer-events-none" />
+      )}
+      
+      {showTooltip && explanation && !isPast && (
+        <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 p-3 text-left pointer-events-none">
+          <div className="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+            <div className="font-semibold text-sm text-gray-900 flex items-center gap-1">
+              <CalendarIcon className="w-3.5 h-3.5" />
+              {date}
+            </div>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              explanation.saleStatus === 'available' ? 'bg-green-100 text-green-700' :
+              explanation.saleStatus === 'limited' ? 'bg-amber-100 text-amber-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {explanation.saleStatus === 'available' ? '可售' : 
+               explanation.saleStatus === 'limited' ? '限售' : '不可售'}
+            </span>
+          </div>
+          
+          <div className="text-xs text-gray-700 mb-2">
+            <span className="font-medium">主要原因：</span>
+            {explanation.primaryReason}
+          </div>
+          
+          <div className="space-y-1 text-[11px] mb-2">
+            <div className="grid grid-cols-2 gap-1">
+              <div className={`flex items-center gap-1 ${explanation.factors.maintenance ? 'text-red-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.maintenance ? 'bg-red-500' : 'bg-gray-200'}`} />
+                维修占用
+              </div>
+              <div className={`flex items-center gap-1 ${explanation.factors.locked ? 'text-purple-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.locked ? 'bg-purple-500' : 'bg-gray-200'}`} />
+                锁房
+              </div>
+              <div className={`flex items-center gap-1 ${explanation.factors.soldOut ? 'text-blue-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.soldOut ? 'bg-blue-500' : 'bg-gray-200'}`} />
+                已售罄
+              </div>
+              <div className={`flex items-center gap-1 ${explanation.factors.inventoryExhausted ? 'text-orange-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.inventoryExhausted ? 'bg-orange-500' : 'bg-gray-200'}`} />
+                库存耗尽
+              </div>
+              <div className={`flex items-center gap-1 ${explanation.factors.channelRestricted ? 'text-indigo-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.channelRestricted ? 'bg-indigo-500' : 'bg-gray-200'}`} />
+                渠道受限
+              </div>
+              <div className={`flex items-center gap-1 ${explanation.factors.cleaningPending ? 'text-amber-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.cleaningPending ? 'bg-amber-500' : 'bg-gray-200'}`} />
+                清洁未完成
+              </div>
+              <div className={`flex items-center gap-1 col-span-2 ${explanation.factors.oversellRisk ? 'text-rose-600' : 'text-gray-400'}`}>
+                <div className={`w-2 h-2 rounded-full ${explanation.factors.oversellRisk ? 'bg-rose-500' : 'bg-gray-200'}`} />
+                超卖风险
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center justify-between text-[11px] text-gray-600 pt-2 border-t border-gray-100">
+            <span>总库存: <b>{explanation.totalInventory}</b></span>
+            <span>可用: <b className={explanation.availableInventory > 0 ? 'text-green-600' : 'text-gray-500'}>{explanation.availableInventory}</b></span>
+          </div>
+          
+          {channelSnapshots.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <div className="text-[11px] font-medium text-gray-700 mb-1">渠道库存分布：</div>
+              <div className="grid grid-cols-2 gap-1">
+                {channelSnapshots.map(snap => (
+                  <div key={snap.channel} className="flex items-center justify-between text-[10px]">
+                    <span className="text-gray-600">{channelNames[snap.channel]}</span>
+                    <span className={`font-medium ${
+                      snap.oversoldUnits > 0 ? 'text-rose-600' :
+                      snap.availableUnits > 0 ? 'text-green-600' : 'text-gray-400'
+                    }`}>
+                      {snap.availableUnits}/{snap.totalUnits}
+                      {snap.oversoldUnits > 0 && <span className="text-rose-500"> 超{snap.oversoldUnits}</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {explanation.detailedReasons.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <div className="text-[11px] font-medium text-gray-700 mb-1">详细说明：</div>
+              <ul className="text-[10px] text-gray-600 space-y-0.5 list-disc list-inside">
+                {explanation.detailedReasons.slice(0, 3).map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-r border-b border-gray-200 rotate-45" />
+        </div>
       )}
     </div>
   );
@@ -376,8 +581,12 @@ export default function AvailabilityCalendar() {
         
         <div className="flex flex-wrap gap-3 text-xs">
           <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-white border border-gray-300 rounded" />
-            <span className="text-gray-600">可预订</span>
+            <div className="w-3 h-3 bg-green-100 border border-green-400 rounded" />
+            <span className="text-gray-600">可售</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-amber-50 border border-amber-400 rounded" />
+            <span className="text-gray-600">限售</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-blue-100 border border-blue-300 rounded" />
@@ -396,6 +605,14 @@ export default function AvailabilityCalendar() {
             <span className="text-gray-600">已锁房</span>
           </div>
           <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-amber-100 border border-amber-400 rounded" />
+            <span className="text-gray-600">清洁中</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-rose-100 border border-rose-500 rounded" />
+            <span className="text-gray-600">超卖风险</span>
+          </div>
+          <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-yellow-50 rounded" />
             <span className="text-gray-600">节假日</span>
           </div>
@@ -403,17 +620,12 @@ export default function AvailabilityCalendar() {
             <div className="w-3 h-3 bg-amber-50 rounded" />
             <span className="text-gray-600">周末</span>
           </div>
+          <div className="h-4 w-px bg-gray-300 mx-1" />
           <div className="flex items-center gap-1">
-            <Wrench className="w-3 h-3 text-red-600" />
-            <span className="text-gray-600">维修</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Lock className="w-3 h-3 text-purple-600" />
-            <span className="text-gray-600">锁房</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Unlock className="w-3 h-3 text-green-600" />
-            <span className="text-gray-600">放量</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">直销</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">OTA</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">长租</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">包栋</span>
           </div>
         </div>
         
